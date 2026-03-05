@@ -20,6 +20,7 @@
 #           ax.set_yticklabels([f'{p:g}%' for p in pcts])
 
 import numpy as np
+import matplotlib.pyplot as plt
 from math import log10, floor
 
 
@@ -267,3 +268,142 @@ def get_axis_bounds_and_ticks_ln_pct(data, padding=0.0):
     bounds = [min(min_log, ticks_vals[0]), max(max_log, ticks_vals[-1])]
 
     return bounds, ticks_vals, pct_labels
+
+
+def plot_ratios(x_data, ratio_data, x_axis_label='x_axis_label',
+                y_axis_label='y_axis_label', title='title', padding=0.05,
+                colors=None):
+    """Plot ratio data with y-axis formatted as percentage change.
+
+    Takes raw ratio data (value/baseline, where 1.0 = no change) and plots it
+    on a log-ratio y-axis with human-friendly percentage-change labels.
+
+    Args:
+        x_data: 1-D array-like of length N (x-axis values)
+        ratio_data: array-like of ratios (1.0 = no change, 2.0 = +100%, etc.)
+            If 1-D (length N): single line plotted.
+            If 2-D with shape (N, M): M lines plotted, one per column.
+        x_axis_label: label for x-axis
+        y_axis_label: label for y-axis
+        title: plot title
+        padding: fractional padding for y-axis range (default 0.05)
+        colors: optional list of colors, one per column of ratio_data.
+            If None, uses matplotlib's default color cycle.
+
+    Returns:
+        fig, ax: the matplotlib Figure and Axes objects
+    """
+    ratio_data = np.asarray(ratio_data, dtype=float)
+    if ratio_data.ndim == 1:
+        ratio_data = ratio_data.reshape(-1, 1)
+
+    if ratio_data.shape[0] != len(x_data):
+        raise ValueError(
+            f"First dimension of ratio_data ({ratio_data.shape[0]}) "
+            f"must match length of x_data ({len(x_data)})")
+
+    if colors is not None and len(colors) != ratio_data.shape[1]:
+        raise ValueError(
+            f"Length of colors ({len(colors)}) must match number of columns "
+            f"in ratio_data ({ratio_data.shape[1]})")
+
+    log_data = np.log(ratio_data)
+
+    global_min = log_data.min()
+    global_max = log_data.max()
+
+    bounds, ticks, pct_labels = get_axis_bounds_and_ticks_ln_pct(
+        [global_min, global_max], padding=padding)
+
+    fig, ax = plt.subplots()
+    for i in range(log_data.shape[1]):
+        kwargs = {'color': colors[i]} if colors is not None else {}
+        ax.plot(x_data, log_data[:, i], **kwargs)
+
+    ax.set_ylim(bounds)
+    ax.set_yticks(ticks)
+    ax.set_yticklabels([f'{p:g}%' for p in pct_labels])
+    ax.set_xlabel(x_axis_label)
+    ax.set_ylabel(y_axis_label)
+    ax.set_title(title)
+
+    return fig, ax
+
+
+def plot_ratios_shaded(x_data, ratio_data, x_axis_label='x_axis_label',
+                       y_axis_label='y_axis_label', title='title', padding=0.05,
+                       color=None):
+    """Plot ratio data with shaded uncertainty bands and percentage-change y-axis.
+
+    The number of columns in ratio_data determines the visual style:
+        1 column:  solid line (identical to plot_ratios)
+        3 columns: shaded band (cols 0–2) with median line (col 1)
+        5 columns: two nested bands (outer cols 0–4, inner cols 1–3) with median (col 2)
+        7 columns: thin lines at cols 0 & 6, two nested bands, median line (col 3)
+
+    All elements (lines, bands) use the same color, distinguished by alpha/linewidth.
+
+    Args:
+        x_data: 1-D array-like of length N (x-axis values)
+        ratio_data: array-like of ratios with shape (N,), (N,1), (N,3), (N,5), or (N,7)
+        x_axis_label: label for x-axis
+        y_axis_label: label for y-axis
+        title: plot title
+        padding: fractional padding for y-axis range (default 0.05)
+        color: optional color for all plot elements (any matplotlib color spec).
+            If None, uses the first color from matplotlib's default cycle.
+
+    Returns:
+        fig, ax: the matplotlib Figure and Axes objects
+    """
+    ratio_data = np.asarray(ratio_data, dtype=float)
+    if ratio_data.ndim == 1:
+        ratio_data = ratio_data.reshape(-1, 1)
+
+    if ratio_data.shape[0] != len(x_data):
+        raise ValueError(
+            f"First dimension of ratio_data ({ratio_data.shape[0]}) "
+            f"must match length of x_data ({len(x_data)})")
+
+    M = ratio_data.shape[1]
+    if M not in (1, 3, 5, 7):
+        raise ValueError(
+            f"ratio_data must have 1, 3, 5, or 7 columns, got {M}")
+
+    log_data = np.log(ratio_data)
+
+    global_min = log_data.min()
+    global_max = log_data.max()
+
+    bounds, ticks, pct_labels = get_axis_bounds_and_ticks_ln_pct(
+        [global_min, global_max], padding=padding)
+
+    fig, ax = plt.subplots()
+
+    if color is None:
+        color = plt.rcParams['axes.prop_cycle'].by_key()['color'][0]
+
+    if M == 1:
+        ax.plot(x_data, log_data[:, 0], color=color)
+    elif M == 3:
+        ax.fill_between(x_data, log_data[:, 0], log_data[:, 2], color=color, alpha=0.3)
+        ax.plot(x_data, log_data[:, 1], color=color)
+    elif M == 5:
+        ax.fill_between(x_data, log_data[:, 0], log_data[:, 4], color=color, alpha=0.15)
+        ax.fill_between(x_data, log_data[:, 1], log_data[:, 3], color=color, alpha=0.3)
+        ax.plot(x_data, log_data[:, 2], color=color)
+    elif M == 7:
+        ax.plot(x_data, log_data[:, 0], color=color, linewidth=0.5, alpha=0.7)
+        ax.plot(x_data, log_data[:, 6], color=color, linewidth=0.5, alpha=0.7)
+        ax.fill_between(x_data, log_data[:, 1], log_data[:, 5], color=color, alpha=0.15)
+        ax.fill_between(x_data, log_data[:, 2], log_data[:, 4], color=color, alpha=0.3)
+        ax.plot(x_data, log_data[:, 3], color=color)
+
+    ax.set_ylim(bounds)
+    ax.set_yticks(ticks)
+    ax.set_yticklabels([f'{p:g}%' for p in pct_labels])
+    ax.set_xlabel(x_axis_label)
+    ax.set_ylabel(y_axis_label)
+    ax.set_title(title)
+
+    return fig, ax
