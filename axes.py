@@ -104,7 +104,7 @@ def round_pct_nice(pct):
     For pct <= -90: round to successive nines (-90, -99, -99.9, -99.99, ...).
     """
     if pct == 0:
-        return 0.0
+        return 0
     rounded_int = round(pct)
     if rounded_int in _EXTRA_NICE_PCTS:
         return float(rounded_int)
