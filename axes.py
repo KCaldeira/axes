@@ -92,32 +92,70 @@ def get_axis_bounds_and_ticks(data, padding=0.0):
     return [min_val, max_val], ticks_vals
 
 
-_EXTRA_NICE_PCTS = {250, 150, 75, 25, -25, -75, -95, -98}
+_MULT_WEIGHTS = [
+    (1.0, 1/8),   # 10, 100, 1000 — powers of 10, very nice
+    (1.5, 0.5),   # 15, 150, 1500
+    (2.0, 1.0),   # 20, 200
+    (2.5, 0.5),   # 25, 250
+    (3.0, 1.0),   # 30, 300
+    (4.0, 1.0),   # 40, 400
+    (5.0, 0.2),   # 50, 500 — half-powers of 10, very nice
+    (6.0, 1.0),
+    (7.0, 1.0),
+    (7.5, 0.5),   # 75, 750
+    (8.0, 1.0),
+    (9.0, 1.0),
+]
 
 
-def round_pct_nice(pct):
+def round_pct_nice(pct, pct_range=None):
     """Round a percentage-change value to a 'nice' number for axis labels.
 
-    First rounds to the nearest integer and checks against a list of extra nice
-    values (25, 75, 150, 250, -25, -75, -95, -98).  If matched, returns that value.
-    Otherwise falls back to rounding to one significant digit.
-    For pct <= -90: round to successive nines (-90, -99, -99.9, -99.99, ...).
+    Uses weighted distance to prefer 'nicer' numbers (powers of 10, multiples
+    of 5, 25, 75) over plain 1-significant-digit rounding.
+    For pct <= -90: round remainder from -100 to nearest of {1,2,5,10}×10^k.
+
+    Args:
+        pct: the percentage value to round
+        pct_range: optional (min_pct, max_pct) tuple; candidates outside this
+            range don't get niceness bonuses (weight clamped to 1.0)
     """
     if pct == 0:
         return 0
-    rounded_int = round(pct)
-    if rounded_int in _EXTRA_NICE_PCTS:
-        return float(rounded_int)
-    if pct > -90:
-        # Round to 1 significant digit
-        magnitude = 10 ** floor(log10(abs(pct)))
-        return round(pct / magnitude) * magnitude
-    # Deep negative: remainder from -100 is a power of 10
-    remainder = 100 + pct  # e.g. pct=-95 -> remainder=5
-    if remainder <= 0:
-        return -100.0
-    power = round(log10(remainder))
-    return -(100 - 10 ** power)
+    if pct <= -90:
+        remainder = 100 + pct  # e.g. pct=-95 -> remainder=5
+        if remainder <= 0:
+            return -100.0
+        mag = 10 ** floor(log10(remainder))
+        best = None
+        best_dist = float('inf')
+        for m in [1, 2, 5, 10]:
+            candidate = m * mag
+            dist = abs(remainder - candidate)
+            if dist < best_dist:
+                best_dist = dist
+                best = candidate
+        return -(100 - best)
+    abs_pct = abs(pct)
+    magnitude = 10 ** floor(log10(abs_pct))
+    best_candidate = None
+    best_score = float('inf')
+    for mag in [magnitude / 10, magnitude, magnitude * 10]:
+        for mult, weight in _MULT_WEIGHTS:
+            candidate = mult * mag
+            signed = -candidate if pct < 0 else candidate
+            # Only apply niceness bonus if candidate is within axis range
+            if pct_range is not None and not (pct_range[0] <= signed <= pct_range[1]):
+                w = max(weight, 1.0)
+            else:
+                w = weight
+            score = abs(abs_pct - candidate) * w
+            if score < best_score:
+                best_score = score
+                best_candidate = candidate
+    if pct < 0:
+        best_candidate = -best_candidate
+    return best_candidate
 
 
 def get_axis_bounds_and_ticks_ln_pct(data, padding=0.0):
@@ -139,24 +177,28 @@ def get_axis_bounds_and_ticks_ln_pct(data, padding=0.0):
     max_log += span * padding
 
     # Approximate spacing for ~6 ticks
-    interval = (max_log - min_log) / 6
+    interval = (max_log - min_log) / 7
 
-    # Build raw tick positions anchored at zero
+    # Build raw tick positions anchored at zero, extending 2 extra intervals
+    # beyond bounds so that after rounding we still have ticks near the edges
     raw_ticks = [0.0]
     t = interval
-    while t <= max_log + interval:
+    while t <= max_log + 2 * interval:
         raw_ticks.append(t)
         t += interval
     t = -interval
-    while t >= min_log - interval:
+    while t >= min_log - 2 * interval:
         raw_ticks.append(t)
         t -= interval
 
     # Convert to nice percentages, deduplicate
+    # Compute pct range corresponding to the padded bounds
+    pct_min = (np.exp(min_log) - 1) * 100
+    pct_max = (np.exp(max_log) - 1) * 100
     seen = set()
     pct_labels = []
     for t in raw_ticks:
-        pct = round_pct_nice((np.exp(t) - 1) * 100)
+        pct = round_pct_nice((np.exp(t) - 1) * 100, pct_range=(pct_min, pct_max))
         if pct not in seen:
             seen.add(pct)
             pct_labels.append(pct)
