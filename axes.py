@@ -3,7 +3,7 @@ import numpy as np
 from math import log10, floor
 
 
-def get_axis_bounds_and_ticks(data, padding=0.1):
+def get_axis_bounds_and_ticks(data, padding=0.0):
     """Calculate the bounds of an axis given the data and padding."""
     if not data:
         return (0, 1)  # default bounds if no data
@@ -92,14 +92,22 @@ def get_axis_bounds_and_ticks(data, padding=0.1):
     return [min_val, max_val], ticks_vals
 
 
+_EXTRA_NICE_PCTS = {250, 150, 75, 25, -25, -75, -95, -98}
+
+
 def round_pct_nice(pct):
     """Round a percentage-change value to a 'nice' number for axis labels.
 
-    For pct >= 0 or 0 > pct > -90: round to one significant digit.
+    First rounds to the nearest integer and checks against a list of extra nice
+    values (25, 75, 150, 250, -25, -75, -95, -98).  If matched, returns that value.
+    Otherwise falls back to rounding to one significant digit.
     For pct <= -90: round to successive nines (-90, -99, -99.9, -99.99, ...).
     """
     if pct == 0:
         return 0.0
+    rounded_int = round(pct)
+    if rounded_int in _EXTRA_NICE_PCTS:
+        return float(rounded_int)
     if pct > -90:
         # Round to 1 significant digit
         magnitude = 10 ** floor(log10(abs(pct)))
@@ -112,7 +120,7 @@ def round_pct_nice(pct):
     return -(100 - 10 ** power)
 
 
-def get_axis_bounds_and_ticks_ln_pct(data, padding=0.1):
+def get_axis_bounds_and_ticks_ln_pct(data, padding=0.0):
     """Calculate axis bounds and ticks for data in log-ratio space, with percentage-change labels.
 
     Args:
@@ -124,25 +132,43 @@ def get_axis_bounds_and_ticks_ln_pct(data, padding=0.1):
         ticks_vals: tick positions in log space
         pct_labels: percentage-change value at each tick, e.g. -50.0 means -50%
     """
-    bounds, ticks_vals = get_axis_bounds_and_ticks(data, padding)
-    pct_labels = [round_pct_nice((np.exp(t) - 1) * 100) for t in ticks_vals]
+    min_log = min(data)
+    max_log = max(data)
+    span = max_log - min_log
+    min_log -= span * padding
+    max_log += span * padding
 
-    # Remove ticks with duplicate rounded labels (keep the one closest to the exact value)
-    best = {}
-    for tick, label in zip(ticks_vals, pct_labels):
-        exact = (np.exp(tick) - 1) * 100
-        if label not in best or abs(exact - label) < abs(best[label][1] - label):
-            best[label] = (tick, exact)
-    # Reconstruct in sorted order by label value
-    pct_labels = sorted(best.keys())
+    # Approximate spacing for ~6 ticks
+    interval = (max_log - min_log) / 6
 
-    # Place ticks at exact log-space positions matching the rounded labels
+    # Build raw tick positions anchored at zero
+    raw_ticks = [0.0]
+    t = interval
+    while t <= max_log + interval:
+        raw_ticks.append(t)
+        t += interval
+    t = -interval
+    while t >= min_log - interval:
+        raw_ticks.append(t)
+        t -= interval
+
+    # Convert to nice percentages, deduplicate
+    seen = set()
+    pct_labels = []
+    for t in raw_ticks:
+        pct = round_pct_nice((np.exp(t) - 1) * 100)
+        if pct not in seen:
+            seen.add(pct)
+            pct_labels.append(pct)
+    pct_labels.sort()
+
+    # Convert to log space and keep ticks within the padded data range
     ticks_vals = np.log(1 + np.array(pct_labels) / 100.)
+    mask = (ticks_vals >= min_log - 1e-9) & (ticks_vals <= max_log + 1e-9)
+    pct_labels = [p for p, m in zip(pct_labels, mask) if m]
+    ticks_vals = ticks_vals[mask]
 
-    # Expand bounds if ticks extend beyond original bounds
-    if ticks_vals[0] < bounds[0]:
-        bounds[0] = ticks_vals[0]
-    if ticks_vals[-1] > bounds[1]:
-        bounds[1] = ticks_vals[-1]
+    # Bounds: at least as wide as data, expand if ticks go beyond
+    bounds = [min(min_log, ticks_vals[0]), max(max_log, ticks_vals[-1])]
 
     return bounds, ticks_vals, pct_labels
