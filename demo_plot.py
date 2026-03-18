@@ -15,7 +15,7 @@ def spread(x, width):
 # --- 1 column: plain line ---
 fig, ax = plot_ratios(x, center, title='1 column — plain line',
                       x_axis_label='x', y_axis_label='Change')
-fig.savefig('demo_plot_1col.png', dpi=150, bbox_inches='tight')
+fig.savefig('plots/demo_plot_1col.png', dpi=150, bbox_inches='tight')
 print('Saved demo_plot_1col.png')
 
 # --- 3 columns: three lines ---
@@ -26,7 +26,7 @@ data3 = np.column_stack([
 ])
 fig, ax = plot_ratios(x, data3, title='3 columns — three lines',
                       x_axis_label='x', y_axis_label='Change')
-fig.savefig('demo_plot_3col.png', dpi=150, bbox_inches='tight')
+fig.savefig('plots/demo_plot_3col.png', dpi=150, bbox_inches='tight')
 print('Saved demo_plot_3col.png')
 
 # --- 5 columns: five lines ---
@@ -39,7 +39,7 @@ data5 = np.column_stack([
 ])
 fig, ax = plot_ratios(x, data5, title='5 columns — five lines',
                       x_axis_label='x', y_axis_label='Change')
-fig.savefig('demo_plot_5col.png', dpi=150, bbox_inches='tight')
+fig.savefig('plots/demo_plot_5col.png', dpi=150, bbox_inches='tight')
 print('Saved demo_plot_5col.png')
 
 # --- 7 columns: seven lines ---
@@ -54,5 +54,5 @@ data7 = np.column_stack([
 ])
 fig, ax = plot_ratios(x, data7, title='7 columns — seven lines',
                       x_axis_label='x', y_axis_label='Change')
-fig.savefig('demo_plot_7col.png', dpi=150, bbox_inches='tight')
+fig.savefig('plots/demo_plot_7col.png', dpi=150, bbox_inches='tight')
 print('Saved demo_plot_7col.png')

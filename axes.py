@@ -9,19 +9,32 @@
 #           ax.set_ylim(bounds)
 #           ax.set_yticks(ticks)
 #
-#   get_axis_bounds_and_ticks_ln_pct(data, padding)
-#       For axes where the data is in log-ratio space (i.e. ln(value/baseline))
-#       but labels should display as percentage change. Returns tick positions
-#       in log space and corresponding percentage labels.
+#   get_axis_bounds_and_ticks_ratio_pct(data, padding)
+#       For ratio data (1.0 = no change) plotted on a log scale with
+#       percentage-change labels. Returns tick positions in log space
+#       and corresponding percentage labels.
 #       Usage:
-#           bounds, ticks, pcts = get_axis_bounds_and_ticks_ln_pct([min_y, max_y], padding=0.05)
+#           bounds, ticks, pcts = get_axis_bounds_and_ticks_ratio_pct([0.5, 2.0], padding=0.05)
 #           ax.set_ylim(bounds)
 #           ax.set_yticks(ticks)
 #           ax.set_yticklabels([f'{p:g}%' for p in pcts])
+#
+#   get_axis_bounds_and_ticks_arcsinh(data, scale, padding)
+#       For amount data (positive, negative, or zero) plotted on an
+#       arcsinh(amount / scale) axis. Returns tick positions in arcsinh
+#       space and corresponding amount labels.
+#       Usage:
+#           bounds, ticks, amounts = get_axis_bounds_and_ticks_arcsinh([-5, 100], scale=2)
+#           ax.set_ylim(bounds)
+#           ax.set_yticks(ticks)
+#           ax.set_yticklabels([f'{a:g}' for a in amounts])
 
 import numpy as np
 import matplotlib.pyplot as plt
 from math import log10, floor
+
+from ratio_percent_ticks import get_axis_bounds_and_ticks_ratio_pct  # noqa: F401
+from amount_arcsinh_ticks import get_axis_bounds_and_ticks_arcsinh  # noqa: F401
 
 
 def get_axis_bounds_and_ticks(data, padding=0.0):
@@ -125,151 +138,6 @@ def get_axis_bounds_and_ticks(data, padding=0.0):
     return [min_val, max_val], ticks_vals
 
 
-# Candidate multipliers and their "niceness" weights for round_pct_nice().
-# Each entry is (multiplier, weight). Lower weight = "nicer" number, meaning the
-# algorithm will stretch further from the raw value to land on it.
-# E.g. 10, 50, 100 are very nice (low weight); 20, 30, 40 are ordinary (weight 1.0).
-_MULT_WEIGHTS = [
-    (1.0, 1/9),   # 10, 100, 1000 — powers of 10, very nice
-    (1.5, 2/3),   # 15, 150, 1500
-    (2.0, 1.0),   # 20, 200
-    (2.5, 2/3),   # 25, 250
-    (3.0, 1.0),   # 30, 300
-    (4.0, 1.0),   # 40, 400
-    (5.0, 1/3),   # 50, 500 — half-powers of 10, very nice
-    (6.0, 1.0),
-    (7.0, 1.0),
-    (7.5, 2/3),   # 75, 750
-    (8.0, 1.0),
-    (9.0, 1.0),
-]
-
-
-def round_pct_nice(pct, pct_range=None):
-    """Round a percentage-change value to a 'nice' number for axis labels.
-
-    Finds the nearest "nice" number (powers of 10, multiples of 5/25/50/75)
-    using a weighted-distance metric where nicer numbers have lower weights,
-    so the algorithm prefers them even if they're slightly further away.
-
-    Special handling for pct <= -90: rounds the remainder from -100 to the
-    nearest of {1, 2, 5, 10} × 10^k (e.g. -95 → -95, -93 → -95).
-
-    Args:
-        pct: the percentage value to round (e.g. 23.7 or -48.2)
-        pct_range: optional (min_pct, max_pct) tuple defining the visible axis
-            range. Candidates outside this range lose their niceness bonus
-            (weight clamped to 1.0) so the algorithm won't stretch to reach
-            a "nice" number that would fall outside the plot.
-
-    Returns:
-        The nearest nice percentage value (float).
-    """
-    if pct == 0:
-        return 0
-    if pct <= -90:
-        remainder = 100 + pct  # e.g. pct=-95 -> remainder=5
-        if remainder <= 0:
-            return -100.0
-        mag = 10 ** floor(log10(remainder))
-        best = None
-        best_dist = float('inf')
-        for m in [1, 2, 5, 10]:
-            candidate = m * mag
-            dist = abs(remainder - candidate)
-            if dist < best_dist:
-                best_dist = dist
-                best = candidate
-        return -(100 - best)
-    abs_pct = abs(pct)
-    magnitude = 10 ** floor(log10(abs_pct))
-    best_candidate = None
-    best_score = float('inf')
-    for mag in [magnitude / 10, magnitude, magnitude * 10]:
-        for mult, weight in _MULT_WEIGHTS:
-            candidate = mult * mag
-            signed = -candidate if pct < 0 else candidate
-            # Only apply niceness bonus if candidate is within axis range
-            if pct_range is not None and not (pct_range[0] <= signed <= pct_range[1]):
-                w = max(weight, 1.0)
-            else:
-                w = weight
-            score = abs(abs_pct - candidate) * w
-            if score < best_score:
-                best_score = score
-                best_candidate = candidate
-    if pct < 0:
-        best_candidate = -best_candidate
-    return best_candidate
-
-
-def get_axis_bounds_and_ticks_ln_pct(data, padding=0.0):
-    """Calculate axis bounds and ticks for log-ratio data with percentage-change labels.
-
-    For data stored as ln(value / baseline), this function computes ~6 evenly
-    spaced tick positions anchored at zero, rounds each to a "nice" percentage
-    via round_pct_nice(), then converts back to log space. The result is tick
-    marks at human-friendly percentages (e.g. -25%, 0%, 25%, 50%) positioned
-    correctly on the log-ratio axis.
-
-    Args:
-        data: iterable of values in log-ratio space, i.e. ln(value/baseline).
-            Often just [min_val, max_val].
-        padding: fractional padding added to each side of the data range
-            (e.g. 0.05 adds 5% on each side)
-
-    Returns:
-        bounds: [min, max] in log space, suitable for ax.set_ylim
-        ticks_vals: array of tick positions in log space, suitable for ax.set_yticks
-        pct_labels: list of percentage-change values at each tick (e.g. [-25, 0, 25]).
-            Use with ax.set_yticklabels([f'{p:g}%' for p in pct_labels]).
-    """
-    min_log = min(data)
-    max_log = max(data)
-    span = max_log - min_log
-    min_log -= span * padding
-    max_log += span * padding
-
-    # Approximate spacing for ~6 ticks
-    interval = (max_log - min_log) / 7
-
-    # Build raw tick positions anchored at zero, extending 2 extra intervals
-    # beyond bounds so that after rounding we still have ticks near the edges
-    raw_ticks = [0.0]
-    t = interval
-    while t <= max_log + 2 * interval:
-        raw_ticks.append(t)
-        t += interval
-    t = -interval
-    while t >= min_log - 2 * interval:
-        raw_ticks.append(t)
-        t -= interval
-
-    # Convert to nice percentages, deduplicate
-    # Compute pct range corresponding to the padded bounds
-    pct_min = (np.exp(min_log) - 1) * 100
-    pct_max = (np.exp(max_log) - 1) * 100
-    seen = set()
-    pct_labels = []
-    for t in raw_ticks:
-        pct = round_pct_nice((np.exp(t) - 1) * 100, pct_range=(pct_min, pct_max))
-        if pct not in seen:
-            seen.add(pct)
-            pct_labels.append(pct)
-    pct_labels.sort()
-
-    # Convert to log space and keep ticks within the padded data range
-    ticks_vals = np.log(1 + np.array(pct_labels) / 100.)
-    mask = (ticks_vals >= min_log - 1e-9) & (ticks_vals <= max_log + 1e-9)
-    pct_labels = [p for p, m in zip(pct_labels, mask) if m]
-    ticks_vals = ticks_vals[mask]
-
-    # Bounds: at least as wide as data, expand if ticks go beyond
-    bounds = [min(min_log, ticks_vals[0]), max(max_log, ticks_vals[-1])]
-
-    return bounds, ticks_vals, pct_labels
-
-
 def plot_ratios(x_data, ratio_data, x_axis_label='x_axis_label',
                 y_axis_label='y_axis_label', title='title', padding=0.05,
                 colors=None):
@@ -309,11 +177,8 @@ def plot_ratios(x_data, ratio_data, x_axis_label='x_axis_label',
 
     log_data = np.log(ratio_data)
 
-    global_min = log_data.min()
-    global_max = log_data.max()
-
-    bounds, ticks, pct_labels = get_axis_bounds_and_ticks_ln_pct(
-        [global_min, global_max], padding=padding)
+    bounds, ticks, pct_labels = get_axis_bounds_and_ticks_ratio_pct(
+        [ratio_data.min(), ratio_data.max()], padding=padding)
 
     fig, ax = plt.subplots()
     for i in range(log_data.shape[1]):
@@ -337,8 +202,8 @@ def plot_ratios_shaded(x_data, ratio_data, x_axis_label='x_axis_label',
 
     The number of columns in ratio_data determines the visual style:
         1 column:  solid line (identical to plot_ratios)
-        3 columns: shaded band (cols 0–2) with median line (col 1)
-        5 columns: two nested bands (outer cols 0–4, inner cols 1–3) with median (col 2)
+        3 columns: shaded band (cols 0-2) with median line (col 1)
+        5 columns: two nested bands (outer cols 0-4, inner cols 1-3) with median (col 2)
         7 columns: thin lines at cols 0 & 6, two nested bands, median line (col 3)
 
     All elements (lines, bands) use the same color, distinguished by alpha/linewidth.
@@ -372,11 +237,8 @@ def plot_ratios_shaded(x_data, ratio_data, x_axis_label='x_axis_label',
 
     log_data = np.log(ratio_data)
 
-    global_min = log_data.min()
-    global_max = log_data.max()
-
-    bounds, ticks, pct_labels = get_axis_bounds_and_ticks_ln_pct(
-        [global_min, global_max], padding=padding)
+    bounds, ticks, pct_labels = get_axis_bounds_and_ticks_ratio_pct(
+        [ratio_data.min(), ratio_data.max()], padding=padding)
 
     fig, ax = plt.subplots()
 
@@ -402,6 +264,141 @@ def plot_ratios_shaded(x_data, ratio_data, x_axis_label='x_axis_label',
     ax.set_ylim(bounds)
     ax.set_yticks(ticks)
     ax.set_yticklabels([f'{p:g}%' for p in pct_labels])
+    ax.set_xlabel(x_axis_label)
+    ax.set_ylabel(y_axis_label)
+    ax.set_title(title)
+
+    return fig, ax
+
+
+def plot_amounts_arcsinh(x_data, amount_data, scale, x_axis_label='x_axis_label',
+                 y_axis_label='y_axis_label', title='title', padding=0.05,
+                 colors=None):
+    """Plot amount data with y-axis using arcsinh transform.
+
+    Takes raw amount data (positive, negative, or zero) and plots it
+    on an arcsinh(amount / scale) y-axis with amount labels.
+
+    Args:
+        x_data: 1-D array-like of length N (x-axis values)
+        amount_data: array-like of amount values.
+            If 1-D (length N): single line plotted.
+            If 2-D with shape (N, M): M lines plotted, one per column.
+        scale: arcsinh scale parameter (controls linear-to-log transition)
+        x_axis_label: label for x-axis
+        y_axis_label: label for y-axis
+        title: plot title
+        padding: fractional padding for y-axis range (default 0.05)
+        colors: optional list of colors, one per column of amount_data.
+            If None, uses matplotlib's default color cycle.
+
+    Returns:
+        fig, ax: the matplotlib Figure and Axes objects
+    """
+    amount_data = np.asarray(amount_data, dtype=float)
+    if amount_data.ndim == 1:
+        amount_data = amount_data.reshape(-1, 1)
+
+    if amount_data.shape[0] != len(x_data):
+        raise ValueError(
+            f"First dimension of amount_data ({amount_data.shape[0]}) "
+            f"must match length of x_data ({len(x_data)})")
+
+    if colors is not None and len(colors) != amount_data.shape[1]:
+        raise ValueError(
+            f"Length of colors ({len(colors)}) must match number of columns "
+            f"in amount_data ({amount_data.shape[1]})")
+
+    transformed = np.arcsinh(amount_data / scale)
+
+    bounds, ticks, amount_labels = get_axis_bounds_and_ticks_arcsinh(
+        [amount_data.min(), amount_data.max()], scale=scale, padding=padding)
+
+    fig, ax = plt.subplots()
+    for i in range(transformed.shape[1]):
+        kwargs = {'color': colors[i]} if colors is not None else {}
+        ax.plot(x_data, transformed[:, i], **kwargs)
+
+    ax.set_ylim(bounds)
+    ax.set_yticks(ticks)
+    ax.set_yticklabels([f'{a:g}' for a in amount_labels])
+    ax.set_xlabel(x_axis_label)
+    ax.set_ylabel(y_axis_label)
+    ax.set_title(title)
+
+    return fig, ax
+
+
+def plot_amounts_shaded_arcsinh(x_data, amount_data, scale, x_axis_label='x_axis_label',
+                        y_axis_label='y_axis_label', title='title', padding=0.05,
+                        color=None):
+    """Plot amount data with shaded uncertainty bands and arcsinh y-axis.
+
+    The number of columns in amount_data determines the visual style:
+        1 column:  solid line (identical to plot_amounts_arcsinh)
+        3 columns: shaded band (cols 0-2) with median line (col 1)
+        5 columns: two nested bands (outer cols 0-4, inner cols 1-3) with median (col 2)
+        7 columns: thin lines at cols 0 & 6, two nested bands, median line (col 3)
+
+    All elements (lines, bands) use the same color, distinguished by alpha/linewidth.
+
+    Args:
+        x_data: 1-D array-like of length N (x-axis values)
+        amount_data: array-like of amounts with shape (N,), (N,1), (N,3), (N,5), or (N,7)
+        scale: arcsinh scale parameter (controls linear-to-log transition)
+        x_axis_label: label for x-axis
+        y_axis_label: label for y-axis
+        title: plot title
+        padding: fractional padding for y-axis range (default 0.05)
+        color: optional color for all plot elements (any matplotlib color spec).
+            If None, uses the first color from matplotlib's default cycle.
+
+    Returns:
+        fig, ax: the matplotlib Figure and Axes objects
+    """
+    amount_data = np.asarray(amount_data, dtype=float)
+    if amount_data.ndim == 1:
+        amount_data = amount_data.reshape(-1, 1)
+
+    if amount_data.shape[0] != len(x_data):
+        raise ValueError(
+            f"First dimension of amount_data ({amount_data.shape[0]}) "
+            f"must match length of x_data ({len(x_data)})")
+
+    M = amount_data.shape[1]
+    if M not in (1, 3, 5, 7):
+        raise ValueError(
+            f"amount_data must have 1, 3, 5, or 7 columns, got {M}")
+
+    transformed = np.arcsinh(amount_data / scale)
+
+    bounds, ticks, amount_labels = get_axis_bounds_and_ticks_arcsinh(
+        [amount_data.min(), amount_data.max()], scale=scale, padding=padding)
+
+    fig, ax = plt.subplots()
+
+    if color is None:
+        color = plt.rcParams['axes.prop_cycle'].by_key()['color'][0]
+
+    if M == 1:
+        ax.plot(x_data, transformed[:, 0], color=color)
+    elif M == 3:
+        ax.fill_between(x_data, transformed[:, 0], transformed[:, 2], color=color, alpha=0.3)
+        ax.plot(x_data, transformed[:, 1], color=color)
+    elif M == 5:
+        ax.fill_between(x_data, transformed[:, 0], transformed[:, 4], color=color, alpha=0.15)
+        ax.fill_between(x_data, transformed[:, 1], transformed[:, 3], color=color, alpha=0.3)
+        ax.plot(x_data, transformed[:, 2], color=color)
+    elif M == 7:
+        ax.plot(x_data, transformed[:, 0], color=color, linewidth=0.5, alpha=0.7)
+        ax.plot(x_data, transformed[:, 6], color=color, linewidth=0.5, alpha=0.7)
+        ax.fill_between(x_data, transformed[:, 1], transformed[:, 5], color=color, alpha=0.15)
+        ax.fill_between(x_data, transformed[:, 2], transformed[:, 4], color=color, alpha=0.3)
+        ax.plot(x_data, transformed[:, 3], color=color)
+
+    ax.set_ylim(bounds)
+    ax.set_yticks(ticks)
+    ax.set_yticklabels([f'{a:g}' for a in amount_labels])
     ax.set_xlabel(x_axis_label)
     ax.set_ylabel(y_axis_label)
     ax.set_title(title)

@@ -15,7 +15,7 @@ def spread(x, width):
 # --- 1 column: plain line ---
 fig, ax = plot_ratios_shaded(x, center, title='1 column — plain line',
                              x_axis_label='x', y_axis_label='Change')
-fig.savefig('demo_shaded_1col.png', dpi=150, bbox_inches='tight')
+fig.savefig('plots/demo_shaded_1col.png', dpi=150, bbox_inches='tight')
 print('Saved demo_shaded_1col.png')
 
 # --- 3 columns: one shaded band + median ---
@@ -27,7 +27,7 @@ data3 = np.column_stack([
 fig, ax = plot_ratios_shaded(x, data3, title='3 columns — one band',
                              x_axis_label='x', y_axis_label='Change',
                              color='steelblue')
-fig.savefig('demo_shaded_3col.png', dpi=150, bbox_inches='tight')
+fig.savefig('plots/demo_shaded_3col.png', dpi=150, bbox_inches='tight')
 print('Saved demo_shaded_3col.png')
 
 # --- 5 columns: two nested bands + median ---
@@ -41,7 +41,7 @@ data5 = np.column_stack([
 fig, ax = plot_ratios_shaded(x, data5, title='5 columns — two nested bands',
                              x_axis_label='x', y_axis_label='Change',
                              color='darkorange')
-fig.savefig('demo_shaded_5col.png', dpi=150, bbox_inches='tight')
+fig.savefig('plots/demo_shaded_5col.png', dpi=150, bbox_inches='tight')
 print('Saved demo_shaded_5col.png')
 
 # --- 7 columns: two bands + thin outer lines + median ---
@@ -57,5 +57,5 @@ data7 = np.column_stack([
 fig, ax = plot_ratios_shaded(x, data7, title='7 columns — bands + thin outer lines',
                              x_axis_label='x', y_axis_label='Change',
                              color='seagreen')
-fig.savefig('demo_shaded_7col.png', dpi=150, bbox_inches='tight')
+fig.savefig('plots/demo_shaded_7col.png', dpi=150, bbox_inches='tight')
 print('Saved demo_shaded_7col.png')

@@ -1,6 +1,50 @@
 # axes
 
-Utility functions for calculating axis bounds, tick marks, and plotting ratio data with percentage-change axes.
+Utility functions for calculating axis bounds, tick marks, and plotting data with percentage-change axes (log scale) or arcsinh-transformed axes.
+
+## Usage from Another Project
+
+Add the `axes` directory to your Python path, then import what you need:
+
+```python
+import sys
+sys.path.insert(0, '/path/to/axes')
+
+from axes import plot_ratios, plot_ratios_shaded
+from axes import plot_amounts_arcsinh, plot_amounts_shaded_arcsinh
+from axes import get_axis_bounds_and_ticks, get_axis_bounds_and_ticks_ratio_pct
+from axes import get_axis_bounds_and_ticks_arcsinh
+```
+
+Alternatively, create a symlink to the `axes` directory from your project:
+
+```bash
+ln -s /path/to/axes /path/to/your_project/axes
+```
+
+Then import directly:
+
+```python
+from axes import plot_ratios, plot_amounts_arcsinh
+```
+
+### When to use which transform
+
+| Data type | Function family | Transform | Labels |
+|-----------|----------------|-----------|--------|
+| Ratios (1.0 = no change) | `plot_ratios`, `get_axis_bounds_and_ticks_ratio_pct` | `ln(ratio)` | Percentage change (e.g. +50%, -20%) |
+| Amounts (pos/neg/zero) | `plot_amounts_arcsinh`, `get_axis_bounds_and_ticks_arcsinh` | `arcsinh(amount / scale)` | Raw amounts (e.g. +100, -5) |
+| Simple numeric data | `get_axis_bounds_and_ticks` | None (linear) | Raw values |
+
+### Choosing the `scale` parameter for arcsinh
+
+The `scale` parameter controls where the arcsinh axis transitions from linear (near zero) to logarithmic (far from zero). Values within `[-scale, scale]` appear roughly linear; values beyond that are compressed logarithmically.
+
+A practical approach: set `scale` based on a percentile of your data:
+
+```python
+scale = np.percentile(np.abs(data), 97.5)  # 95% of data in the linear region
+```
 
 ## Plotting Functions
 
@@ -47,6 +91,36 @@ fig, ax = plot_ratios_shaded(x, data5, title='Uncertainty bands', color='seagree
 
 Optional `color` argument accepts any matplotlib color spec (default: first color from the default cycle).
 
+### `plot_amounts_arcsinh(x_data, amount_data, scale, ..., colors=None)`
+
+Plots amount data (positive, negative, or zero) with an arcsinh-transformed y-axis. The `scale` parameter controls the transition from linear behavior near zero to logarithmic behavior far from zero. Each column of `amount_data` is drawn as a separate line.
+
+```python
+import numpy as np
+from axes import plot_amounts_arcsinh
+
+x = np.arange(10)
+amounts = np.column_stack([x * 0.5, -x * 0.3])
+fig, ax = plot_amounts_arcsinh(x, amounts, scale=2, x_axis_label='Year', y_axis_label='Change',
+                               title='Two series', colors=['steelblue', 'darkorange'])
+```
+
+### `plot_amounts_shaded_arcsinh(x_data, amount_data, scale, ..., color=None)`
+
+Plots amount data with shaded uncertainty bands using arcsinh transform. Same column conventions as `plot_ratios_shaded` (1, 3, 5, or 7 columns).
+
+```python
+import numpy as np
+from axes import plot_amounts_shaded_arcsinh
+
+x = np.linspace(0, 10, 100)
+center = 2 * np.sin(x)
+spread = 0.5 * x / x.max()
+data5 = np.column_stack([center - 2*spread, center - spread, center,
+                         center + spread, center + 2*spread])
+fig, ax = plot_amounts_shaded_arcsinh(x, data5, scale=1, title='Arcsinh bands', color='seagreen')
+```
+
 ## Axis Utility Functions
 
 ### `get_axis_bounds_and_ticks(data, padding=0.1)`
@@ -59,32 +133,37 @@ from axes import get_axis_bounds_and_ticks
 bounds, ticks = get_axis_bounds_and_ticks([-0.2, 0.8], padding=0.1)
 ```
 
-### `get_axis_bounds_and_ticks_ln_pct(data, padding=0.1)`
+### `get_axis_bounds_and_ticks_ratio_pct(data, padding=0.1)`
 
-For data in log-ratio space (`log(n/d)`), computes axis bounds and tick positions in log space with percentage-change labels. Useful when you want to plot log-ratio data but label the axis with percentage changes (e.g., -50%, 0%, +100%).
-
-Tick labels are rounded to "nice" percentages via `round_pct_nice`.
+For ratio data (where 1.0 = no change, 2.0 = +100%, 0.5 = -50%), computes axis bounds and tick positions in log space with percentage-change labels. The function log-transforms the ratio data internally.
 
 ```python
 import numpy as np
-from axes import get_axis_bounds_and_ticks_ln_pct
+from axes import get_axis_bounds_and_ticks_ratio_pct
 
-data = [np.log(0.5), np.log(3)]  # -50% to +200%
-bounds, ticks, pct_labels = get_axis_bounds_and_ticks_ln_pct(data, padding=0.0)
-# pct_labels: [-70, -60, -30, 0.0, 50, 100, 200]
+data = [0.5, 3.0]  # ratios: -50% to +200%
+bounds, ticks, pct_labels = get_axis_bounds_and_ticks_ratio_pct(data, padding=0.0)
+# pct_labels contains nice percentage values like [-50, -20, 0, 50, 100, 200]
 ```
 
-### `round_pct_nice(pct)`
+### `get_axis_bounds_and_ticks_arcsinh(data, scale, padding=0.0)`
 
-Rounds a percentage-change value to a "nice" number for axis labels:
+For amount data (positive, negative, or zero), computes axis bounds and tick positions in arcsinh space with amount labels. The `scale` parameter controls the linear-to-logarithmic transition.
 
-- **0 to -90% and all positive values**: rounds to one significant digit (121 -> 100, 0.123 -> 0.1, -45 -> -40)
-- **Below -90%**: rounds to successive nines (-95 -> -90, -99.3 -> -99, -99.95 -> -99.9)
+```python
+from axes import get_axis_bounds_and_ticks_arcsinh
+
+bounds, ticks, amount_labels = get_axis_bounds_and_ticks_arcsinh([-5, 100], scale=2)
+# amount_labels contains nice amount values like [-5, -2, 0, 10, 50, 100]
+```
 
 ## Demo Scripts
 
 - `demo_plot.py` — generates demo PNGs for `plot_ratios()` with 1, 3, 5, and 7 columns
 - `demo_plot_shaded.py` — generates demo PNGs for `plot_ratios_shaded()` with 1, 3, 5, and 7 columns
+- `demo_arcsinh_scatterplot.py` — scatter plot demo for arcsinh-transformed axis
+
+Output is saved to the `plots/` subdirectory.
 
 ## Requirements
 
