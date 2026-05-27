@@ -231,6 +231,16 @@ def choose_ratio_percent_ticks(rmin, rmax, symmetric=False, buffer=0.05):
     plot_min = min(ticks[0][1], y_min_new)
     plot_max = max(ticks[-1][1], y_max_new)
 
+    # The asymmetric tick-candidate library can pull plot_min/plot_max apart
+    # (e.g. -80% snaps to ln(0.2)≈-1.609 while +300% snaps to ln(4)≈1.386).
+    # When the caller asked for symmetric bounds — typically because they're
+    # pairing this with a diverging colormap whose midpoint must land on
+    # zero — widen to the symmetric extremum so RdBu's white sits at 0%.
+    if symmetric:
+        extremum = max(abs(plot_min), abs(plot_max))
+        plot_min = -extremum
+        plot_max = +extremum
+
     tick_locations = [x for _, x in ticks]
     tick_labels = [format_percent(p) for p, _ in ticks]
 
