@@ -17,7 +17,7 @@
 #           bounds, ticks, pcts = get_axis_bounds_and_ticks_ratio_pct([0.5, 2.0], padding=0.05)
 #           ax.set_ylim(bounds)
 #           ax.set_yticks(ticks)
-#           ax.set_yticklabels([f'{p:g}%' for p in pcts])
+#           ax.set_yticklabels([format_percent(p) for p in pcts])
 #
 #   get_axis_bounds_and_ticks_arcsinh(data, scale, padding)
 #       For amount data (positive, negative, or zero) plotted on an
@@ -28,13 +28,35 @@
 #           ax.set_ylim(bounds)
 #           ax.set_yticks(ticks)
 #           ax.set_yticklabels([f'{a:g}' for a in amounts])
+#       Pass kind="asinh2" for a double arcsinh, for data spanning many
+#       orders of magnitude.
+#
+#   get_axis_bounds_and_ticks_ratio_compressed(data, scale, kind)
+#       For ratio data spanning more range than a plain log axis can show:
+#       plotted at asinh (or asinh2) of the log ratio, labeled in percent.
+#       Usage:
+#           bounds, ticks, labels = get_axis_bounds_and_ticks_ratio_compressed(
+#               [1e-6, 1e8], scale=0.3, kind="asinh2")
+#           ax.set_ylim(bounds)
+#           ax.set_yticks(ticks)
+#           ax.set_yticklabels(labels)
 
 import numpy as np
 import matplotlib.pyplot as plt
 from math import log10, floor
 
-from ratio_percent_ticks import get_axis_bounds_and_ticks_ratio_pct  # noqa: F401
-from amount_arcsinh_ticks import get_axis_bounds_and_ticks_arcsinh  # noqa: F401
+from ratio_percent_ticks import (  # noqa: F401
+    get_axis_bounds_and_ticks_ratio_pct,
+    get_axis_bounds_and_ticks_ratio_compressed,
+    ratio_axis_transform,
+    format_percent,
+)
+from amount_arcsinh_ticks import (  # noqa: F401
+    get_axis_bounds_and_ticks_arcsinh,
+    amount_to_arcsinh,
+)
+
+RATIO_AXIS_KINDS = ("log", "asinh", "asinh2")
 
 
 def get_axis_bounds_and_ticks(data, padding=0.0):
@@ -76,7 +98,7 @@ def get_axis_bounds_and_ticks(data, padding=0.0):
     # Express range as mantissa × 10^power (mantissa in [1, 10))
     range_val = max_val - min_val
     range_power = floor(log10(range_val))
-    range_mantissa = range_val / 10**range_power
+    range_mantissa = range_val / 10.0**range_power
 
     # Select a tick pattern (normalized to [0, range_scale]) based on mantissa.
     # The pattern's step size (ticks[1]) is scaled by 10^power to get the
@@ -106,23 +128,26 @@ def get_axis_bounds_and_ticks(data, padding=0.0):
         print("Unexpected range mantissa:", range_mantissa)
         raise ValueError("Unexpected range mantissa: {}".format(range_mantissa))
     
-    min_tick = round(min_val / 10**range_power) * 10**range_power
-    max_tick = round(max_val / 10**range_power) * 10**range_power
+    # Float arithmetic: round() * 10**power would give an arbitrary-precision
+    # Python int, which exceeds int64 once |power| >= 19 and then cannot be
+    # coerced by numpy (matplotlib raises on isfinite).
+    min_tick = round(min_val / 10.0**range_power) * 10.0**range_power
+    max_tick = round(max_val / 10.0**range_power) * 10.0**range_power
 
-    min_val = min(min_val, min_tick)
-    max_val = max(max_val, max_tick)
+    min_val = float(min(min_val, min_tick))
+    max_val = float(max(max_val, max_tick))
 
     if min_val <= 0 and max_val >= 0:
         # 0 is in range, so anchor ticks at zero
-        tick_step = ticks[1] * 10**range_power  # spacing from the tick pattern
+        tick_step = ticks[1] * 10.0**range_power  # spacing from the tick pattern
         pos_ticks = np.arange(0, max_val + tick_step, tick_step)
         neg_ticks = np.arange(-tick_step, min_val - tick_step, -tick_step)
         ticks_vals = np.sort(np.concatenate([neg_ticks, pos_ticks]))
 
     else:
         # 0 not in range, so add ticks at regular intervals of 10**range_power
-        tick_step = ticks[1] * 10**range_power
-        ticks_vals = min_tick + ticks * 10**range_power
+        tick_step = ticks[1] * 10.0**range_power
+        ticks_vals = min_tick + ticks * 10.0**range_power
 
     # Ensure ticks extend one step beyond data range on each end
     if len(ticks_vals) > 0 and ticks_vals[0] > min_val:
@@ -138,9 +163,26 @@ def get_axis_bounds_and_ticks(data, padding=0.0):
     return [min_val, max_val], ticks_vals
 
 
+def _ratio_axis(ratio_data, padding, kind, scale):
+    """Transform ratio data for plotting; return (data, bounds, ticks, labels)."""
+    if kind not in RATIO_AXIS_KINDS:
+        raise ValueError(f"kind must be one of {RATIO_AXIS_KINDS}, got {kind!r}")
+    data_range = [np.nanmin(ratio_data), np.nanmax(ratio_data)]
+    if kind == "log":
+        bounds, ticks, pct_labels = get_axis_bounds_and_ticks_ratio_pct(
+            data_range, padding=padding)
+        # format_percent, not f'{p:g}%': :g keeps 6 digits and prints -99.99999% as -100%.
+        return np.log(ratio_data), bounds, ticks, [format_percent(p) for p in pct_labels]
+    if scale is None:
+        raise ValueError(f"kind={kind!r} needs a scale (in log-ratio units, e.g. 0.3)")
+    bounds, ticks, labels = get_axis_bounds_and_ticks_ratio_compressed(
+        data_range, scale, kind, padding=padding)
+    return ratio_axis_transform(np.log(ratio_data), scale, kind), bounds, ticks, labels
+
+
 def plot_ratios(x_data, ratio_data, x_axis_label='x_axis_label',
                 y_axis_label='y_axis_label', title='title', padding=0.05,
-                colors=None):
+                colors=None, kind='log', scale=None):
     """Plot ratio data with y-axis formatted as percentage change.
 
     Takes raw ratio data (value/baseline, where 1.0 = no change) and plots it
@@ -157,6 +199,11 @@ def plot_ratios(x_data, ratio_data, x_axis_label='x_axis_label',
         padding: fractional padding for y-axis range (default 0.05)
         colors: optional list of colors, one per column of ratio_data.
             If None, uses matplotlib's default color cycle.
+        kind: y-axis transform. 'log' (default) plots ln(ratio); 'asinh' and
+            'asinh2' plot asinh(ln(ratio) / scale) and its double arcsinh,
+            which compress large changes (see ratio_percent_ticks).
+        scale: required for 'asinh' / 'asinh2': the log-ratio magnitude
+            where the axis turns from linear to compressed (e.g. 0.3).
 
     Returns:
         fig, ax: the matplotlib Figure and Axes objects
@@ -175,10 +222,7 @@ def plot_ratios(x_data, ratio_data, x_axis_label='x_axis_label',
             f"Length of colors ({len(colors)}) must match number of columns "
             f"in ratio_data ({ratio_data.shape[1]})")
 
-    log_data = np.log(ratio_data)
-
-    bounds, ticks, pct_labels = get_axis_bounds_and_ticks_ratio_pct(
-        [ratio_data.min(), ratio_data.max()], padding=padding)
+    log_data, bounds, ticks, tick_labels = _ratio_axis(ratio_data, padding, kind, scale)
 
     fig, ax = plt.subplots()
     for i in range(log_data.shape[1]):
@@ -187,7 +231,7 @@ def plot_ratios(x_data, ratio_data, x_axis_label='x_axis_label',
 
     ax.set_ylim(bounds)
     ax.set_yticks(ticks)
-    ax.set_yticklabels([f'{p:g}%' for p in pct_labels])
+    ax.set_yticklabels(tick_labels)
     ax.set_xlabel(x_axis_label)
     ax.set_ylabel(y_axis_label)
     ax.set_title(title)
@@ -197,7 +241,7 @@ def plot_ratios(x_data, ratio_data, x_axis_label='x_axis_label',
 
 def plot_ratios_shaded(x_data, ratio_data, x_axis_label='x_axis_label',
                        y_axis_label='y_axis_label', title='title', padding=0.05,
-                       color=None):
+                       color=None, kind='log', scale=None):
     """Plot ratio data with shaded uncertainty bands and percentage-change y-axis.
 
     The number of columns in ratio_data determines the visual style:
@@ -217,6 +261,9 @@ def plot_ratios_shaded(x_data, ratio_data, x_axis_label='x_axis_label',
         padding: fractional padding for y-axis range (default 0.05)
         color: optional color for all plot elements (any matplotlib color spec).
             If None, uses the first color from matplotlib's default cycle.
+        kind: y-axis transform, 'log' (default), 'asinh' or 'asinh2'
+            (as in plot_ratios)
+        scale: required for 'asinh' / 'asinh2' (as in plot_ratios)
 
     Returns:
         fig, ax: the matplotlib Figure and Axes objects
@@ -235,10 +282,7 @@ def plot_ratios_shaded(x_data, ratio_data, x_axis_label='x_axis_label',
         raise ValueError(
             f"ratio_data must have 1, 3, 5, or 7 columns, got {M}")
 
-    log_data = np.log(ratio_data)
-
-    bounds, ticks, pct_labels = get_axis_bounds_and_ticks_ratio_pct(
-        [ratio_data.min(), ratio_data.max()], padding=padding)
+    log_data, bounds, ticks, tick_labels = _ratio_axis(ratio_data, padding, kind, scale)
 
     fig, ax = plt.subplots()
 
@@ -263,7 +307,7 @@ def plot_ratios_shaded(x_data, ratio_data, x_axis_label='x_axis_label',
 
     ax.set_ylim(bounds)
     ax.set_yticks(ticks)
-    ax.set_yticklabels([f'{p:g}%' for p in pct_labels])
+    ax.set_yticklabels(tick_labels)
     ax.set_xlabel(x_axis_label)
     ax.set_ylabel(y_axis_label)
     ax.set_title(title)
@@ -273,7 +317,7 @@ def plot_ratios_shaded(x_data, ratio_data, x_axis_label='x_axis_label',
 
 def plot_amounts_arcsinh(x_data, amount_data, scale, x_axis_label='x_axis_label',
                  y_axis_label='y_axis_label', title='title', padding=0.05,
-                 colors=None):
+                 colors=None, kind='asinh'):
     """Plot amount data with y-axis using arcsinh transform.
 
     Takes raw amount data (positive, negative, or zero) and plots it
@@ -291,6 +335,8 @@ def plot_amounts_arcsinh(x_data, amount_data, scale, x_axis_label='x_axis_label'
         padding: fractional padding for y-axis range (default 0.05)
         colors: optional list of colors, one per column of amount_data.
             If None, uses matplotlib's default color cycle.
+        kind: 'asinh' (default) for asinh(amount / scale), or 'asinh2' for
+            asinh(asinh(amount / scale)), which compresses the tails further.
 
     Returns:
         fig, ax: the matplotlib Figure and Axes objects
@@ -309,10 +355,11 @@ def plot_amounts_arcsinh(x_data, amount_data, scale, x_axis_label='x_axis_label'
             f"Length of colors ({len(colors)}) must match number of columns "
             f"in amount_data ({amount_data.shape[1]})")
 
-    transformed = np.arcsinh(amount_data / scale)
+    transformed = amount_to_arcsinh(amount_data, scale, kind)
 
     bounds, ticks, amount_labels = get_axis_bounds_and_ticks_arcsinh(
-        [amount_data.min(), amount_data.max()], scale=scale, padding=padding)
+        [np.nanmin(amount_data), np.nanmax(amount_data)], scale=scale, padding=padding,
+        kind=kind)
 
     fig, ax = plt.subplots()
     for i in range(transformed.shape[1]):
@@ -331,7 +378,7 @@ def plot_amounts_arcsinh(x_data, amount_data, scale, x_axis_label='x_axis_label'
 
 def plot_amounts_shaded_arcsinh(x_data, amount_data, scale, x_axis_label='x_axis_label',
                         y_axis_label='y_axis_label', title='title', padding=0.05,
-                        color=None):
+                        color=None, kind='asinh'):
     """Plot amount data with shaded uncertainty bands and arcsinh y-axis.
 
     The number of columns in amount_data determines the visual style:
@@ -352,6 +399,7 @@ def plot_amounts_shaded_arcsinh(x_data, amount_data, scale, x_axis_label='x_axis
         padding: fractional padding for y-axis range (default 0.05)
         color: optional color for all plot elements (any matplotlib color spec).
             If None, uses the first color from matplotlib's default cycle.
+        kind: 'asinh' (default) or 'asinh2' (as in plot_amounts_arcsinh)
 
     Returns:
         fig, ax: the matplotlib Figure and Axes objects
@@ -370,10 +418,11 @@ def plot_amounts_shaded_arcsinh(x_data, amount_data, scale, x_axis_label='x_axis
         raise ValueError(
             f"amount_data must have 1, 3, 5, or 7 columns, got {M}")
 
-    transformed = np.arcsinh(amount_data / scale)
+    transformed = amount_to_arcsinh(amount_data, scale, kind)
 
     bounds, ticks, amount_labels = get_axis_bounds_and_ticks_arcsinh(
-        [amount_data.min(), amount_data.max()], scale=scale, padding=padding)
+        [np.nanmin(amount_data), np.nanmax(amount_data)], scale=scale, padding=padding,
+        kind=kind)
 
     fig, ax = plt.subplots()
 

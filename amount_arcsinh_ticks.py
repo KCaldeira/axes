@@ -7,6 +7,15 @@
 # The scale parameter controls the transition from linear behavior near
 # zero to logarithmic behavior far from zero.
 #
+# `kind` selects the transform (see asinh_transforms): "asinh" (default) is
+# arcsinh(amount / scale); "asinh2" is arcsinh(arcsinh(amount / scale)), which
+# compresses the tails doubly logarithmically, for data spanning many orders
+# of magnitude. "asinh2" axes choose ticks with the compressed-axis ladder
+# algorithm (asinh_transforms.choose_ladder_ticks): the outer ticks sit at or
+# just beyond the data and padding is only a margin, because the fractional
+# buffer used for "asinh" would, in the far tails of an asinh2 axis, push the
+# outer tick orders of magnitude past the data.
+#
 # Standalone usage:
 #     plot_min, plot_max, tick_locs, tick_labels = choose_amount_arcsinh_ticks(amin, amax, scale)
 #
@@ -16,19 +25,21 @@
 #     ax.set_yticks(ticks_vals)
 #     ax.set_yticklabels([f'{a:g}' for a in amount_labels])
 
-import math
-
 import numpy as np
 
-
-def amount_to_arcsinh(a, scale):
-    """Convert an amount value to arcsinh-transformed space."""
-    return math.asinh(a / scale)
+from asinh_transforms import asinh_transform, asinh_inverse, choose_ladder_ticks
 
 
-def arcsinh_to_amount(x, scale):
-    """Convert an arcsinh-transformed value back to amount."""
-    return scale * math.sinh(x)
+def amount_to_arcsinh(a, scale, kind="asinh"):
+    """Convert amount(s) to transformed space (scalar in, float out; array in, array out)."""
+    u = asinh_transform(a, scale, kind)
+    return float(u) if u.ndim == 0 else u
+
+
+def arcsinh_to_amount(x, scale, kind="asinh"):
+    """Convert transformed value(s) back to amounts."""
+    a = asinh_inverse(x, scale, kind)
+    return float(a) if a.ndim == 0 else a
 
 
 def format_amount(a):
@@ -42,13 +53,14 @@ def format_amount(a):
 def build_amount_candidates():
     """Build a library of 'nice' amount ticks.
 
-    Uses a 1-2-5 sequence across magnitudes 10^-4 to 10^7,
-    both positive and negative, plus zero.
+    Uses a 1-2-5 sequence across magnitudes 10^-8 to 10^15,
+    both positive and negative, plus zero. The wide range lets an
+    "asinh2" axis, which can hold many orders of magnitude, find ticks.
     """
     amounts = set()
     amounts.add(0)
 
-    for exp in range(-4, 8):  # 10^-4 to 10^7
+    for exp in range(-8, 16):  # 10^-8 to 10^15
         for base in [1, 2, 5]:
             val = base * 10**exp
             amounts.add(val)
@@ -70,7 +82,8 @@ def _find_nearest_candidate(target, candidates_transformed):
     return best_idx
 
 
-def choose_amount_arcsinh_ticks(amin, amax, scale, symmetric=False, buffer=0.05):
+def choose_amount_arcsinh_ticks(amin, amax, scale, symmetric=False, buffer=0.05,
+                                kind="asinh"):
     """Choose nicely-spaced tick marks for an arcsinh-transformed amount axis.
 
     Accepts raw amount values, transforms via arcsinh(amount / scale) internally,
@@ -83,6 +96,7 @@ def choose_amount_arcsinh_ticks(amin, amax, scale, symmetric=False, buffer=0.05)
         scale: arcsinh scale parameter (controls linear-to-log transition)
         symmetric: if True, make bounds symmetric around zero (in arcsinh space)
         buffer: fractional buffer to add beyond data range (default 0.05)
+        kind: "asinh" (default) or "asinh2" (see asinh_transforms)
 
     Returns:
         plot_min: adjusted minimum bound in arcsinh space
@@ -91,8 +105,8 @@ def choose_amount_arcsinh_ticks(amin, amax, scale, symmetric=False, buffer=0.05)
         tick_labels: list of formatted amount strings
     """
     # Convert amounts to arcsinh space
-    xmin = amount_to_arcsinh(amin, scale)
-    xmax = amount_to_arcsinh(amax, scale)
+    xmin = amount_to_arcsinh(amin, scale, kind)
+    xmax = amount_to_arcsinh(amax, scale, kind)
 
     if xmax < xmin:
         xmin, xmax = xmax, xmin
@@ -114,7 +128,7 @@ def choose_amount_arcsinh_ticks(amin, amax, scale, symmetric=False, buffer=0.05)
 
     # Build candidates in arcsinh space
     amount_candidates = build_amount_candidates()
-    candidates = [(a, amount_to_arcsinh(a, scale)) for a in amount_candidates]
+    candidates = [(a, amount_to_arcsinh(a, scale, kind)) for a in amount_candidates]
     candidates.sort(key=lambda t: t[1])
     candidates_transformed = np.array([x for _, x in candidates])
     candidates_amounts = [a for a, _ in candidates]
@@ -184,7 +198,8 @@ def choose_amount_arcsinh_ticks(amin, amax, scale, symmetric=False, buffer=0.05)
     return plot_min, plot_max, tick_locations, tick_labels
 
 
-def get_axis_bounds_and_ticks_arcsinh(data, scale, padding=0.0, symmetric=False, buffer=0.05):
+def get_axis_bounds_and_ticks_arcsinh(data, scale, padding=0.0, symmetric=False, buffer=0.05,
+                                      kind="asinh"):
     """Calculate axis bounds and ticks for amount data with arcsinh transform.
 
     Accepts raw amount values (positive, negative, or zero), transforms via
@@ -199,6 +214,9 @@ def get_axis_bounds_and_ticks_arcsinh(data, scale, padding=0.0, symmetric=False,
             (in arcsinh space)
         symmetric: if True, make bounds symmetric around zero (in arcsinh space)
         buffer: fractional buffer for tick boundary selection (default 0.05)
+        kind: "asinh" (default) or "asinh2" (see asinh_transforms). With
+            "asinh2", `buffer` is ignored and `padding` is a margin beyond
+            the outer ticks (see the module header).
 
     Returns:
         bounds: [min, max] in arcsinh space, suitable for ax.set_ylim
@@ -208,8 +226,10 @@ def get_axis_bounds_and_ticks_arcsinh(data, scale, padding=0.0, symmetric=False,
             ax.set_yticklabels([f'{a:g}' for a in amount_labels]).
     """
     finite_data = [x for x in data if np.isfinite(x)]
+    if kind == "asinh2":
+        return _bounds_and_ticks_ladder(finite_data, scale, padding, symmetric, kind)
     # Convert amounts to arcsinh space
-    arcsinh_data = [amount_to_arcsinh(x, scale) for x in finite_data]
+    arcsinh_data = [amount_to_arcsinh(x, scale, kind) for x in finite_data]
     xmin = min(arcsinh_data) if arcsinh_data else -0.1
     xmax = max(arcsinh_data) if arcsinh_data else 0.1
     span = xmax - xmin
@@ -217,17 +237,30 @@ def get_axis_bounds_and_ticks_arcsinh(data, scale, padding=0.0, symmetric=False,
     xmax += span * padding
 
     # Convert padded arcsinh bounds back to amounts
-    amin = arcsinh_to_amount(xmin, scale)
-    amax = arcsinh_to_amount(xmax, scale)
+    amin = arcsinh_to_amount(xmin, scale, kind)
+    amax = arcsinh_to_amount(xmax, scale, kind)
 
     plot_min, plot_max, tick_locations, _ = choose_amount_arcsinh_ticks(
-        amin, amax, scale, symmetric=symmetric, buffer=buffer
+        amin, amax, scale, symmetric=symmetric, buffer=buffer, kind=kind
     )
 
     # Add a small margin so outermost ticks aren't clipped by matplotlib
     margin = (plot_max - plot_min) * 0.02
     bounds = [plot_min - margin, plot_max + margin]
     ticks_vals = np.array(tick_locations)
-    amount_labels = [arcsinh_to_amount(x, scale) for x in tick_locations]
+    amount_labels = [arcsinh_to_amount(x, scale, kind) for x in tick_locations]
 
     return bounds, ticks_vals, amount_labels
+
+
+def _bounds_and_ticks_ladder(finite_data, scale, padding, symmetric, kind, n_ticks=7):
+    """`get_axis_bounds_and_ticks_arcsinh` for "asinh2": ticks from the 1-2-5 ladder."""
+    amin = min(finite_data) if finite_data else 0.0
+    amax = max(finite_data) if finite_data else 0.0
+    if amin == 0 and amax == 0:
+        amin, amax = -scale, scale   # nothing to show: span the linear region
+    rungs = [(amount_to_arcsinh(a, scale, kind), a) for a in build_amount_candidates() if a != 0]
+    plot_min, plot_max, tick_locations, amounts = choose_ladder_ticks(
+        amount_to_arcsinh(amin, scale, kind), amount_to_arcsinh(amax, scale, kind), rungs,
+        n_ticks=n_ticks, pad=0.02 + padding, symmetric=symmetric, zero_label=0)
+    return [plot_min, plot_max], np.array(tick_locations), [float(a) for a in amounts]
