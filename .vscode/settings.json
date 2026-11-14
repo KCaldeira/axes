@@ -1,17 +1,17 @@
 {
   // Dark cobalt-blue window tint so this repo's VS Code window is easy to tell apart.
   "workbench.colorCustomizations": {
-    "titleBar.activeBackground": "#0c1a44",
+    "titleBar.activeBackground": "#0a1538",
     "titleBar.activeForeground": "#e2e8f8",
-    "titleBar.inactiveBackground": "#091333",
+    "titleBar.inactiveBackground": "#07102a",
     "titleBar.inactiveForeground": "#a6b2d2",
-    "activityBar.background": "#0c1a44",
+    "activityBar.background": "#0a1538",
     "activityBar.foreground": "#e2e8f8",
-    "statusBar.background": "#0c1a44",
+    "statusBar.background": "#0a1538",
     "statusBar.foreground": "#e2e8f8",
-    "sideBar.background": "#060c20",
-    "editor.background": "#050918",
-    "panel.background": "#050918",
-    "terminal.background": "#050918"
+    "sideBar.background": "#050a1a",
+    "editor.background": "#040713",
+    "panel.background": "#040713",
+    "terminal.background": "#040713"
   }
 }
